@@ -7,12 +7,14 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(calculateTimeLeft());
   const [showNotifyModal, setShowNotifyModal] = useState(false);
   const [showCreatorModal, setShowCreatorModal] = useState(false);
-  const [creatorPassword, setCreatorPassword] = useState('');
   const [isCreatorAuthenticated, setIsCreatorAuthenticated] = useState(false);
+  const [creatorEmail, setCreatorEmail] = useState<string | null>(null);
   const [manualStatus, setManualStatus] = useState<boolean | null>(null);
   const [reminderTime, setReminderTime] = useState('1h');
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isLive, setIsLive] = useState(false);
+  const [streamTitle, setStreamTitle] = useState<string | null>(null);
+  const [streamGame, setStreamGame] = useState<string | null>(null);
   const [fortniteMode, setFortniteMode] = useState(false);
 
   function calculateTimeLeft() {
@@ -40,10 +42,12 @@ export default function App() {
     // Fetch Twitch status periodically
     const checkTwitchStatus = async () => {
       try {
-        const response = await fetch('/api/twitch/status');
+        const response = await fetch(`${window.location.origin}/api/twitch/status`);
         const data = await response.json();
         if (data.isLive !== undefined) {
           setIsLive(data.isLive);
+          setStreamTitle(data.title);
+          setStreamGame(data.game);
         }
       } catch (error) {
         console.error('Error fetching Twitch status:', error);
@@ -53,36 +57,72 @@ export default function App() {
     checkTwitchStatus();
     const statusInterval = setInterval(checkTwitchStatus, 60000); // Check every minute
 
+    // Check if creator is already authenticated
+    const checkAuth = async () => {
+      try {
+        const res = await fetch(`${window.location.origin}/api/auth/me`);
+        const data = await res.json();
+        if (data.authenticated) {
+          setIsCreatorAuthenticated(true);
+          setCreatorEmail(data.email);
+        }
+      } catch (error) {
+        console.error('Error checking auth:', error);
+      }
+    };
+    checkAuth();
+
+    // Listen for OAuth success
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        checkAuth();
+      }
+    };
+    window.addEventListener('message', handleMessage);
+
     return () => {
       clearInterval(timer);
       clearInterval(statusInterval);
+      window.removeEventListener('message', handleMessage);
     };
   }, []);
 
-  const handleCreatorLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    // We validate the password on the server, but we can do a quick check here if we want
-    // For now, we'll just try to set the status to current (null) to verify access
-    toggleManualStatus(manualStatus);
+  const handleGoogleLogin = async () => {
+    try {
+      const res = await fetch(`${window.location.origin}/api/auth/google/url`);
+      const { url } = await res.json();
+      window.open(url, 'google_login', 'width=500,height=600');
+    } catch (error) {
+      console.error('Error getting Google Auth URL:', error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${window.location.origin}/api/auth/logout`, { method: 'POST' });
+      setIsCreatorAuthenticated(false);
+      setCreatorEmail(null);
+    } catch (error) {
+      console.error('Error logging out:', error);
+    }
   };
 
   const toggleManualStatus = async (status: boolean | null) => {
     try {
-      const response = await fetch('/api/creator/status', {
+      const response = await fetch(`${window.location.origin}/api/creator/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: creatorPassword, status })
+        body: JSON.stringify({ status })
       });
       const data = await response.json();
       if (data.success) {
-        setIsCreatorAuthenticated(true);
         setManualStatus(status);
-        // Trigger immediate status check
-        const statusRes = await fetch('/api/twitch/status');
+        // Trigger immediate status check using the existing function
+        const statusRes = await fetch(`${window.location.origin}/api/twitch/status`);
         const statusData = await statusRes.json();
         setIsLive(statusData.isLive);
-      } else {
-        alert('Contraseña incorrecta.');
+        setStreamTitle(statusData.title);
+        setStreamGame(statusData.game);
       }
     } catch (error) {
       console.error('Error setting manual status:', error);
@@ -163,16 +203,30 @@ export default function App() {
               fortniteMode ? 'bg-yellow-400 text-black border-b-4 border-black' : 'bg-[#9146FF] text-white'
             }`}
           >
-            <div className="flex items-center gap-2">
-              <div className="relative flex h-3 w-3">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${fortniteMode ? 'bg-black' : 'bg-white'}`}></span>
-                <span className={`relative inline-flex rounded-full h-3 w-3 ${fortniteMode ? 'bg-black' : 'bg-white'}`}></span>
+            <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 overflow-hidden">
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="relative flex h-3 w-3">
+                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${fortniteMode ? 'bg-black' : 'bg-white'}`}></span>
+                  <span className={`relative inline-flex rounded-full h-3 w-3 ${fortniteMode ? 'bg-black' : 'bg-white'}`}></span>
+                </div>
+                <span className={`text-sm font-black uppercase tracking-tighter italic ${fortniteMode ? 'text-black' : ''}`}>
+                  {fortniteMode ? '¡VICTORY ROYALE EN VIVO!' : 'En Directo Ahora'}
+                </span>
               </div>
-              <span className={`text-sm font-black uppercase tracking-tighter italic ${fortniteMode ? 'text-black' : ''}`}>
-                {fortniteMode ? '¡VICTORY ROYALE EN VIVO!' : 'En Directo Ahora'}
-              </span>
+              
+              {streamTitle && (
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <span className={`hidden sm:inline w-1 h-1 rounded-full ${fortniteMode ? 'bg-black/20' : 'bg-white/20'}`} />
+                  <span className="text-xs sm:text-sm font-bold truncate max-w-[200px] sm:max-w-md opacity-90">
+                    {streamTitle} {streamGame && <span className="opacity-60 font-medium">| {streamGame}</span>}
+                  </span>
+                </div>
+              )}
+              
+              {!streamTitle && (
+                <span className="hidden sm:inline text-sm font-bold opacity-90">¡Bryan16767 está en el campo de batalla!</span>
+              )}
             </div>
-            <span className="hidden sm:inline text-sm font-bold opacity-90">¡Bryan16767 está en el campo de batalla!</span>
             <div className={`flex items-center gap-1 text-sm font-black px-2 py-0.5 rounded-md ${fortniteMode ? 'bg-black text-yellow-400' : 'bg-black/20'}`}>
               <span>VER AHORA</span>
               <ExternalLink className="w-3 h-3" />
@@ -335,35 +389,18 @@ export default function App() {
                     Acceso Creador
                   </h2>
                   <p className={`mb-8 text-sm ${fortniteMode ? 'text-blue-100 font-bold italic uppercase' : 'text-zinc-400'}`}>
-                    Introduce las credenciales para gestionar el estado del directo.
+                    Inicia sesión con Google para gestionar el estado del directo. Solo el administrador tiene acceso.
                   </p>
 
-                  <form onSubmit={handleCreatorLogin} className="w-full space-y-4">
-                    <div className="relative">
-                      <Shield className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
-                      <input 
-                        type="password" 
-                        placeholder="Contraseña de acceso"
-                        value={creatorPassword}
-                        onChange={(e) => setCreatorPassword(e.target.value)}
-                        className={`w-full pl-12 pr-4 py-4 rounded-xl border outline-none transition-all ${
-                          fortniteMode 
-                            ? 'bg-blue-700 border-blue-500 text-white placeholder:text-blue-300' 
-                            : 'bg-black border-zinc-800 text-white placeholder:text-zinc-600 focus:border-purple-500'
-                        }`}
-                        required
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className={`w-full py-4 rounded-xl font-black text-lg transition-all flex items-center justify-center gap-2 ${
-                        fortniteMode ? 'bg-yellow-400 text-black hover:bg-yellow-300' : 'bg-purple-500 hover:bg-purple-600 text-white'
-                      }`}
-                    >
-                      <LogIn className="w-5 h-5" />
-                      ACCEDER
-                    </button>
-                  </form>
+                  <button
+                    onClick={handleGoogleLogin}
+                    className={`w-full py-4 rounded-xl font-black text-lg transition-all flex items-center justify-center gap-3 ${
+                      fortniteMode ? 'bg-yellow-400 text-black hover:bg-yellow-300' : 'bg-white text-black hover:bg-zinc-200'
+                    }`}
+                  >
+                    <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+                    INICIAR SESIÓN CON GOOGLE
+                  </button>
                 </div>
               ) : (
                 <div className="flex flex-col items-center text-center">
@@ -376,9 +413,10 @@ export default function App() {
                   <h2 className={`text-2xl font-black mb-2 ${fortniteMode ? 'text-white italic uppercase' : ''}`}>
                     Panel de Control
                   </h2>
-                  <p className={`mb-8 text-sm ${fortniteMode ? 'text-blue-100 font-bold italic uppercase' : 'text-zinc-400'}`}>
+                  <p className={`mb-2 text-sm ${fortniteMode ? 'text-blue-100 font-bold italic uppercase' : 'text-zinc-400'}`}>
                     Gestiona manualmente el estado "En Directo".
                   </p>
+                  <p className="mb-8 text-xs font-mono opacity-50">{creatorEmail}</p>
 
                   <div className="w-full space-y-3">
                     <button
@@ -428,7 +466,7 @@ export default function App() {
                   </div>
 
                   <button
-                    onClick={() => setIsCreatorAuthenticated(false)}
+                    onClick={handleLogout}
                     className="mt-8 text-zinc-500 hover:text-white text-xs font-bold uppercase tracking-widest"
                   >
                     Cerrar Sesión
